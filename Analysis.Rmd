@@ -1,0 +1,594 @@
+---
+title: "Analysis of weather events and their impact in the USA"
+output: html_document
+---
+
+## Contents:
+
+#### Synopsis:
+  *This section will contain a brief description of the analysis to follow.*
+
+#### Data processing:
+
+  *This section will be very detailed, precisely documenting all the coding steps and reasoning behind the choices made.*
+
+##### Stage 1. Loading the data
+##### Stage 2. Exploratory data analysis
+##### Stage 3. Data cleansing and re-categorisation
+##### Stage 4. Tidying up the data on economic impact and adjusting for inflation
+##### Stage 5.  Handling economic impact and health hazards separately
+##### Stage 6. Measuring overall harm to population health
+##### Stage 7. Further simplification of categories
+##### Stage 8. Summarizing and grouping the data in preparation for plotting
+
+#### Results:
+
+  *This section will contain plots and conclusions.*
+
+## Synopsis: 
+
+This is an anlysis of the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. In particular, this analysis attempts to address the following 2 questions:
+
+1. Across the United States, which types of events are most harmful with respect to population health?
+
+2. Across the United States, which types of events have the greatest economic consequences?
+
+The R programming environment has been used to download, clean and analyse the data. All the steps to reproduce this research are contained within this document.
+
+In addition, this assignment has been used as a learning recap and so a wide variety of libraries and techniques have been implemented (readr, lubridate, regex, dplyr and data.table, XML and getting data from an HTTP table, all 3 plotting systems).
+
+## Data Processing
+
+#### Stage 1. Loading the data
+
+This document assumes that the bz compressed data file is present on the machine that is running the R Software.
+
+The file does not need to be in the working directory, but anyone reproducing these steps is expected to set the variable file location (fileLoc) to contain the appropriate path.
+
+```{r golobal_options}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, cache=TRUE)
+```
+
+```{r file_location}
+fileLoc <- "C:/Dev/Study/R/RepData_PeerAssessment2_Storms/"
+# fileLoc <- "D:/github/RepData_PeerAssessment2_Storms/"
+```
+
+The above line should be edited to suit the reviewer's environment.
+
+```{r load_data, results='hide'}
+library(readr)
+library(lubridate)
+library(dplyr)
+
+# this is the routine to load the raw data file
+compfile <- paste0(fileLoc, "repdata-data-StormData.csv.bz2")
+storms <- read_csv(compfile
+                   # read_csv is not able to infer all the data types due to emtpy/missing values in early years
+                   , col_types = list(STATE__ = col_integer()
+                                      , BGN_DATE = col_date("%m/%d/%Y %H:%M:%S")
+                                      , BGN_TIME = col_character()
+                                      , COUNTY = col_integer()
+                                      , BGN_AZI = col_character()
+                                      , BGN_LOCATI = col_character()
+                                      , END_DATE = col_date("%m/%d/%Y %H:%M:%S")
+                                      , END_TIME = col_character()
+                                      , COUNTY_END = col_integer()
+                                      , END_AZI = col_character()
+                                      , END_LOCATI = col_character()
+                                      , WIDTH = col_integer()
+                                      , MAG = col_integer()
+                                      , FATALITIES = col_integer()
+                                      , INJURIES = col_integer()
+                                      , CROPDMGEXP = col_character()
+                                      , WFO = col_character()
+                                      , STATEOFFIC = col_character()
+                                      , ZONENAMES = col_character()
+                                      , LATITUDE = col_integer()
+                                      , LONGITUDE = col_integer()
+                                      , LATITUDE_E = col_integer()
+                                      , LONGITUDE_ = col_integer()
+                                      , REMARKS = col_character()
+                                      , REFNUM = col_integer()))
+```
+
+In the first step, package readr was used to load the data because:
+
+* it is faster
+* it has granular configuration options for each column, such as date formats
+* it does not try to load all strings as factors
+
+
+#### Stage 2. Exploratory data analysis
+
+After loading, some preliminary investigations were done to ascertain the data quality. For reasons of brevity, the bulk of that exploratory data analysis is not documented here. However, the key points that came out of it are illustrated briefly.
+
+```{r missing_data_early_years}
+# There is no crop damage data before 1993
+table(filter(storms, CROPDMG > 0) %>% mutate(YEAR = year(BGN_DATE)) %>% select(YEAR))
+```
+
+Before 1993, all crop damage readings are zero, yet the earliest readings are from the 1950's. It is not conceivable that weather events caused no crop damage until recent years and so we must conclude that data was not collected for this metric until more recently. 
+
+It was felt necessary to determine how far reaching this problem was, and so some comparison plots are presented here showing the outcome.
+
+```{r data_quality_problems, fig.width=8}
+
+stormsSummary <- mutate(storms, YEAR = year(BGN_DATE)) %>%
+                  group_by(YEAR) %>%
+                  summarise(sum_crop_damage = sum(CROPDMG), mean_crop_damage = mean(CROPDMG)
+                            , sum_property_damage = sum(PROPDMG), mean_property_damage = mean(PROPDMG)
+                            , sum_fatalities = sum(FATALITIES), mean_fatalities = mean(FATALITIES)
+                            , sum_injuries = sum(INJURIES), mean_injuries =  mean(INJURIES)) %>%
+                  mutate(preCropData = factor(ifelse(YEAR < 1993
+                                 , "Before_Crop_Data"
+                                 , "After_Crop_Data"), ordered = TRUE))
+oldpar <- par()
+par(oma = c(2,0,2,1), mar = c(2,2,1,0), mfcol = c(2,4)
+    , cex.axis = 0.8, pch = 19, yaxt = "n", ann = FALSE)
+cols <- names(stormsSummary)[names(stormsSummary) != "YEAR" 
+                                 & names(stormsSummary) != "preCropData"]
+for (COLUMN in cols) {
+  overview <-  data.frame(
+                    YEAR = stormsSummary$YEAR
+                    , stormsSummary[, COLUMN]
+                    , PCD = stormsSummary$preCropData)
+  plot(overview$YEAR, overview[, COLUMN]
+                            , col = (as.numeric(overview$PCD) + 2)
+                            , mtext(side = 2, text = COLUMN
+                            , line = 0.5, cex = 0.8))
+}
+
+title(main = "To determine if data quality is an issue for samples prior to 1993"
+      , outer = TRUE)
+
+par(oldpar)
+```
+
+From the above plots it can be seen that data from the early years has a very different signature from more recent years. Crop damage data is missing, property damage and fatalities data is also scarce yet the totals are disproportionatly high.
+
+There are also an incredible number of event categories, compared to the documented 48 allowed categories. Close inspection revealed serious inconsistencies, relating to the age of the data and the de-centralised way the data have been collected in the past.
+
+```{r inconsistent_categories}
+# the number of unique event types, versus expected 48.
+length(unique(toupper(storms$EVTYPE)))
+```
+
+Even after a directive from the NOAA to standardise the event categories in 1996, there is evidence to show that this was not correctly adopted in the years immediately following, notably through the appearance of a "Summary" type that first appears in 1996 but is subsequently deprecated.
+
+```{r further_inconsistent_categories}
+mutate(storms, YEAR = year(BGN_DATE)
+             , SUMMARYTYPE = grepl("SUMMARY", toupper(EVTYPE))) %>%
+  filter(SUMMARYTYPE == TRUE) %>%     
+  group_by(YEAR) %>% 
+  summarise(SUMMARIES = sum(SUMMARYTYPE)) %>%
+  select(YEAR, SUMMARIES)
+```
+
+#### Stage 3. Data cleansing and re-categorisation
+
+Based upon the exploratory findings, the following decisions were taken about what data could be considered valid and useful:
+
+1. The data has been filtered such that only events beginning 1998 or later have been included beause this has been determined (through exploratory analysis) to be later than the following events which impact on data quality:
+
+* Collection of data on crop damage began (1993). Property damage follows a very similar pattern with scarce and inconsistent data before this time. Fatalities data is also fairly well clustered in distinct groups before and after this year.
+* No standard event naming/categorisation was directed until (1996) [http://www.ncdc.noaa.gov/stormevents/details.jsp]
+* An aberration in categorisation led to lots of events being recored as Summaries (1997).
+* Sums and average appear to be more stable on all four metrics when viewed in a time series, indicating more consistent record keeping.
+
+2. This analysis is only concerned with events that can be characterised by either of both of the following:
+
+* An economic impact through crop or property damage
+* A health hazard resulting in injury or death to one or more persons
+
+The data set contains a variable (column) for each of these four measures (CROPDMG, PROPDMG, FATALITIES, INJURIES). First of all, it was determined that none of these variables contained nonsensical information (namely, negative numbers). Then, to filter for the significant events, a summation was done across each of these four columns to find their total. Only events with a row sum greater than zero were included (indicating that at least one variable had some value greater than zero).
+
+3. Despite a directive in 1996 attempting to standardise all event categorisation, the EVTYPE column in the data set varies wildly from the standard. Significant effort has been put in to re-categorise these items such that they conform to the standard. 
+
+Many cases are obvious, and these corrections have been labelled "general tidy up" in the code. Others had to be individually checked by refering to the episode narrative in the REMARKS column. This has been labelled as "confirmed in REMARKS" where a discretionary decision has been taken by this researcher to categorise an event.
+
+Some items remain greatly ambiguous, such as one event labelled "COASTAL EROSION" which describes a very damaging storm on multiple dimension. According to the documentation, this should have been listed with multiple entries, each describing an individual deleterious effect. However this guidance has not been followed in this and a number of other found cases. It is beyond the scope of this investigation to attempt to correct problems at this level of data collection and recording, so the given entry remains.
+
+Likewise, it is difficult to categorise "DEBRIS FLOW" which may be caused indirectly or directly by heavy rain, or may happen during benign conditions. All possibilities are documented in much the same way. Given there appear to be a majority of cases related to heavy or prolonged rainfall, this category has also been left as is.
+
+```{r data_cleansing}
+# pre-processing and cleaning the data
+
+# variables of most interest
+econImpact <- c("PROPDMG", "CROPDMG")
+healthHzrd <- c("FATALITIES", "INJURIES")
+
+# earliest year we want to include
+yr <- 1998
+
+# To make life easier, I'm going to create a column for YEAR and QTR
+
+# For data quality reasons, I will need to filter by YEAR to remove all the oldest data
+# 1998 has been chosen as it is later than the time when
+# 1. collection of data on crop damage began (1993)
+# 2. a directive was given to use standard naming (1996)
+# 3. an aberration in naming (1997) caused lots of events categorised as ...SUMMARY... 
+
+# I am not interested in events that have no economic or health impact
+# so will filter out rows where these data are all zeros
+
+# Then I have to run a lot of REGEX substitutions to clean up the categorisation.
+storms1 <- mutate(storms
+                  , YEAR = as.integer(year(BGN_DATE))
+                  , QTR = factor(quarter(BGN_DATE), labels = c("Q1", "Q2", "Q3", "Q4"))
+                  , impact = rowSums(storms[, c(econImpact, healthHzrd)]) > 0) %>%
+  filter(YEAR >= yr  & impact == TRUE ) %>%
+  mutate(EVTYPE = trimws(toupper(EVTYPE))
+        , EVTYPE1 = sub(" *\\(?[A-Z]{1}[0-9]{2}\\)?", "", EVTYPE) # general clean up
+        , EVTYPE1 = sub("TSTM", "THUNDERSTORM", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("NON[- ]THUNDERSTORM", "HIGH", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("WINDS", "WIND", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("CURRENTS", "CURRENT", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("WINDCHILL", "WIND CHILL", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("EXTREME.*", "EXTREME COLD/WIND CHILL", EVTYPE1)# general clean up
+        , EVTYPE1 = sub("^THUNDERSTORM$", "THUNDERSTORM WIND", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("^WIND$", "HIGH WIND", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("GUSTY", "HIGH", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("^SNOW$", "HEAVY SNOW", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("^RAIN$", "HEAVY RAIN", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("^FOG$", "DENSE FOG", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("^COLD$", "COLD/WIND CHILL", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("^FREEZE$", "FROST/FREEZE", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("NON-SEVERE WIND DAMAGE", "HIGH WIND", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("LAKE EFFECT", "LAKE-EFFECT", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("WHIRLWIND", "TORNADO", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("LANDSPOUT", "TORNADO", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("STORM SURGE.*", "STORM TIDE", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("HURRICANE$", "HURRICANE/TYPHOON", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("DEVEL", "DEVIL", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("RIVER FLOOD", "FLOOD", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("FLOODING", "FLOOD", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("URBAN/SML STREAM FLD", "FLOOD", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("COASTAL.*FLOOD.*", "COASTAL FLOOD", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("TIDAL FLOOD.*", "COASTAL FLOOD", EVTYPE1) # general clean up
+        , EVTYPE1 = sub(".*BLIZZARD.*", "BLIZZARD", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("UNSEASONABLY COLD", "COLD/WIND CHILL", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("COLD WEATHER", "COLD/WIND CHILL", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("IC.*ROAD.*", "FROST/FREEZE", EVTYPE1) # general clean up
+        , EVTYPE1 = sub(".*FIRE", "WILDFIRE", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("ACCUMULATED SNOWFALL", "HEAVY SNOW", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("EXCESSIVE SNOW", "HEAVY SNOW", EVTYPE1) # general clean up
+        , EVTYPE1 = sub(".*MICROBURST", "THUNDERSTORM WIND", EVTYPE1) # general clean up
+        , EVTYPE1 = sub(".*HAIL", "HAIL", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("LIGHT SNOW", "WINTER WEATHER", EVTYPE1) # general clean up
+        , EVTYPE1 = sub(".*FREEZING RAIN", "WINTER WEATHER", EVTYPE1) # general clean up
+        , EVTYPE1 = sub(".*SURF.*", "HIGH SURF", EVTYPE1) # general clean up
+        , EVTYPE1 = sub(".*WAVE", "HIGH SURF", EVTYPE1) # general clean up
+        , EVTYPE1 = sub(".*FLOOD.*FLASH.*", "FLASH FLOOD", EVTYPE1) # general clean up
+        , EVTYPE1 = sub(".*SEAS$", "MARINE STRONG WIND", EVTYPE1) # general clean up
+        , EVTYPE1 = sub(".+HEAT.*", "EXCESSIVE HEAT", EVTYPE1) # general clean up
+        , EVTYPE1 = sub(".*WARM.*", "HEAT", EVTYPE1) # general clean up
+        , EVTYPE1 = sub("DROWNING", "HEAVY RAIN", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("FALLING SNOW/ICE", "HEAVY SNOW", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("OTHER", "DUST DEVIL", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("GLAZE", "WINTER STORM", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("MIXED PRECIPITATION", "WINTER STORM", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("WINTER WEATHER.*MIX", "WINTER WEATHER", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("LATE SEASON SNOW", "HEAVY SNOW", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("COASTAL EROSION", "STORM TIDE", EVTYPE1) # ambiguous but best fit from in REMARKS
+        , EVTYPE1 = sub("DAM BREAK", "FLASH FLOOD", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("HIGH WATER", "FLOOD", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("ASTRONOMICAL HIGH TIDE", "COASTAL FLOOD", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub(".*SLIDE", "DEBRIS FLOW", EVTYPE1) # ambiguous as some reported during benign weather
+        , EVTYPE1 = sub("BLOWING DUST", "DUST STORM", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("SNOW SQUALL[S]?", "BLIZZARD", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("HYPERTHERMIA/EXPOSURE", "EXTREME COLD/WIND CHILL", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("WINTRY .*", "WINTER STORM", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("FLASH FLOOD/FLOOD", "FLASH FLOOD", EVTYPE1) # confirmed in REMARKS
+        , EVTYPE1 = sub("UNSEASONAL RAIN", "HEAVY RAIN", EVTYPE1)) # confirmed in REMARKS
+```
+
+#### Stage 4. Tidying up the data on economic impact and adjusting for inflation
+
+This study compares the costs of damages over a period of 14 years. Therefore, it was considered necessary to compute an adjusted amount for both property and crop damage.
+
+However, first it is necessary to tidy up the data which is spread over two columns, one for value and another for exponent.
+
+```{r analysis_of_exp_data}
+# what's actually in these columns? It isn't a number.
+table(storms1$PROPDMGEXP)
+table(storms1$CROPDMGEXP)
+
+# how many of these have a value when the related value column is zero
+nrow(storms1[storms1$PROPDMG == 0 & storms1$PROPDMGEXP != "", "PROPDMGEXP"])
+nrow(storms1[storms1$CROPDMG == 0 & storms1$CROPDMGEXP != "", "CROPDMGEXP"])
+```
+
+These results are a little non-intuitive so some best guesses need to be made.
+
+It is assumed that K refers to 1000's (10^3), M refers to 1000000 (10^6) and B refers to 1000000000 (10^9).
+
+It is also assumed that where an EXP column has a value when it's related value column has a value of zero, that this should be taken as an estimated 10^exp, rather than zero.
+
+Finally, if EXP has no value (empty string) but the value column has a value, it is assumed that EXP should be 1 (10^0)
+
+Example calculations:
+
+0 * "" = 0  
+20 * "" = 20  
+2 * "K" = 2000  
+0 * "M" = 1000000 *this is somewhat non-intuitive*  
+5 * "B" = 5000000000
+
+```{r converting_value_and_exp_to_new_value}
+toTheExp <- function(value, exp) {
+  if (value == 0 & exp == "") return(0)
+  if (value == 0 & exp != "") value <- 1
+  
+  exp <- ifelse(exp == "", 1, ifelse(exp == "K", 10^3, ifelse(exp=="M", 10^6, ifelse(exp=="B",10^9,0)))) # final case will return zero for unmatched EXP
+
+  return(value * exp)
+}
+
+storms1 <- mutate(storms1, PROPDMG_VAL = mapply(FUN = toTheExp, value = PROPDMG, exp = PROPDMGEXP)
+      , CROPDMG_VAL = mapply(FUN = toTheExp, value = CROPDMG, exp = CROPDMGEXP))
+```
+
+For the purposes of this analysis, it has been decided to take the real historical annual average rates of inflation and apply these to the amounts given. This is in order to show the cost of damages as if all the events had been presented in the same year, the most recent being 2011.
+
+To facilitate this, the historical rates are read in from an external source:  [http://www.usinflationcalculator.com/inflation/historical-inflation-rates]
+
+These rates are then applied cumulatively according to the year in which the event was recorded.
+
+```{r get_inflation_rates_and_adjust_damages_costs}
+library(XML)
+
+inflation_url <- "http://www.usinflationcalculator.com/inflation/historical-inflation-rates"
+inflation_table <- readHTMLTable(inflation_url, which = 1, header = TRUE, trim = TRUE, colClasses = "numeric")
+inflation_rates <- inflation_table[inflation_table$Year >= 1998 
+                                   & inflation_table$Year <= 2011
+                                   , c("Year", "Ave")]
+
+pastValue <- function(value, year) {
+  if (value == 0 | year == 2011) { return(value) }
+  if (year > max(inflation_rates$Year)) {stop("year exceeds most recent rate available")}
+  for (i in year:max(inflation_rates$Year)) {
+    value <- value * (1 + (inflation_rates[inflation_rates$Year == i, 2]/100))
+    }
+    round(value,1)
+}
+
+storms1 <- mutate(storms1, PROPDMG_ADJ = mapply(FUN = pastValue, value = PROPDMG_VAL, year = YEAR)
+      , CROPDMG_ADJ = mapply(FUN = pastValue, value = CROPDMG_VAL, year = YEAR))
+```
+
+
+#### Stage 5. Handling economic impact and health hazards separately
+
+Once the above steps are complete, the data may then be subsetted along each of the two dimensions: economic impact, health hazard. This is done by using the row sums approach again, but this time using the columns relevant to the specific dimension. This will allow easier manipulation of the data for the remainder of the analysis. 
+
+```{r subsetting_econ_health}
+storms1 <- mutate(storms1, econImpact_event = (rowSums(storms1[, econImpact] > 0)), healthHzrd_event = (rowSums(storms1[, healthHzrd] > 0)))
+
+ei <- storms1[storms1$econImpact_event == TRUE, ] %>%
+      select(YEAR, QTR, EVTYPE1, PROPDMG_ADJ, CROPDMG_ADJ)
+
+hh <- storms1[storms1$healthHzrd_event == TRUE, ] %>%
+      select(YEAR, QTR, EVTYPE1, FATALITIES, INJURIES)
+```
+
+
+#### Stage 6. Measuring overall harm to population health
+
+When trying to find a meaningful measure of the harm caused to the human population by various weather conditions, there are a number of things to consider. Are incidents where one person dies in an isolated, localised event to be considered more dangerous than conditions where a hundred people are hurt, but nobody died? How to compare the danger posed by hundreds of lightning strike events with a single catastrophic tsunami? 
+
+As well as posing difficult questions for this type of analysis, there are also ethical concerns around how do determine where to prioritise our resources. Should it be toward rare events that cause a small number of deaths, or frequent events that cause a large number of serious injuries? Should it be around public information or defences?
+
+Also, the two measures may be inter-related. Consider that the number of reported deaths may reduce slightly over the period year on year, due to improvements in hospital treatments but the effect is likely to be slight. If the number of deaths declines for this reason, one could surmise that the number of reported injuries would increase proportionately with the increase in survivors.
+
+A slight decline in death and injury may be accounted for in increased awareness and public warning systems. It is far beyond the scope of this report to analyse these factors and therefore the assumption has been taken that death and injury rates can be taken as is, without adjustments over the period (as was the case with damage costs and inflation). 
+
+However, given all of the above considerations, a notional measure of overall harm (HARM) will be considered, taken as the geometric mean of the death and injuries values using common reasoning on this topic (similar indication, different scales)  [https://en.wikipedia.org/wiki/Geometric_mean]
+
+Given the frequent appearance of zeros in the base data for this calculation, a  workaround is implemented, namely the simple addition of 1 to both values. No attempt has been made to weight deaths over injuries as this will be dealt with by the approach to plotting the resulting data to highlight deaths.
+
+Being a notional scale, there is not an attempt to evaluate this as mean number of persons harmed, although it could be interpreted this way. 
+
+```{r calculating_overall_harm}
+geoMean <- function(x, y) {
+  if (x + y == 0) return(0) # should not happen due to filtering that's already taken place
+ # i've tried a lot of workarounds to counter the proximity to zero of these values and this is the best one.
+  x <- x + 1
+  y <- y + 1
+  (sqrt(x*y))
+}
+
+hh$HARM <- mapply(FUN = geoMean, x = hh$FATALITIES, y = hh$INJURIES)
+```
+
+#### Stage 7. Further simplification of categories
+
+During the exploratory stage, it was noted that even after cleaning up the categories, there are many infrequent events, and events that are purposefully documented as separate types which are only different by degree. For example, wind speeds are used to categorise various types of wind events, duration of precipitation is used to differentiate a winter storm from a blizzard.
+
+These are all very useful from the meteorological perspective but not for the purposes of this investigation. Therefore some attempt has been made to reduce the number of categories further to a more manageable number, along the reasoning given above, such that THUNDERSTORM WIND, HIGH WIND and STRONG WIND, all become WIND; EXCESSIVE HEAT and HEAT become HEATWAVE; WILDFIRES become DROUGHT (because they happen only as a result of prolonged drought) and so on.
+
+This opportunity has also been used to remove items that are not weather events at all, such as VOLCANIC ASH, DENSE SMOKE, AVALANCHE and ASTRONOMICAL LOW TIDE. For example, AVALANCHE may only happen in winter, but reported cases indicate that cause is human disturbance and not weather events.
+
+```{r further_categorisation_of_events}
+EVTYPE_SIMPLE <- data.frame(EVTYPE1 =
+c("FLASH FLOOD","FLOOD","SEICHE","LAKESHORE FLOOD","STORM TIDE","COASTAL FLOOD","TSUNAMI","THUNDERSTORM WIND","HIGH WIND","DUST STORM","STRONG WIND","LIGHTNING","TORNADO","DUST DEVIL","WATERSPOUT","FUNNEL CLOUD","EXTREME COLD/WIND CHILL","COLD/WIND CHILL","FROST/FREEZE","EXCESSIVE HEAT","HEAT","HURRICANE/TYPHOON","TROPICAL STORM","TROPICAL DEPRESSION","HEAVY RAIN","DEBRIS FLOW","DENSE FOG","FREEZING FOG","HEAVY SNOW","LAKE-EFFECT SNOW","HAIL","WILDFIRE","DROUGHT","WINTER STORM","ICE STORM","BLIZZARD","WINTER WEATHER","MARINE STRONG WIND","MARINE HIGH WIND","MARINE THUNDERSTORM WIND","HIGH SURF")
+, EVTYPE2 = 
+c("FLOOD","FLOOD","FLOOD","FLOOD","COASTAL FLOOD","COASTAL FLOOD","COASTAL FLOOD","WIND","WIND","WIND","WIND","LIGHTNING","TORNADO","TORNADO","TORNADO","TORNADO","COLD WEATHER","COLD WEATHER","COLD WEATHER","HEATWAVE","HEATWAVE","H'CANE/TROP STORM","H'CANE/TROP STORM","H'CANE/TROP STORM","HEAVY RAIN","HEAVY RAIN","FOG","FOG","HEAVY SNOW","HEAVY SNOW","HAIL","DROUGHT","DROUGHT","WINTER STORM","WINTER STORM","WINTER STORM","WINTER WEATHER","MARINE WIND","MARINE WIND","MARINE WIND","MARINE WIND"))
+
+# inner join style merge will filter out all non-matched new EVTYPES
+hh <- merge(hh, EVTYPE_SIMPLE, by="EVTYPE1")
+ei <- merge(ei, EVTYPE_SIMPLE, by="EVTYPE1")
+
+# convert the new categories to a factor ordered by event frequency
+hh_EVLEVELS <- names(table(hh$EVTYPE2))[order(table(hh$EVTYPE2))]
+hh$EVTYPE2 <- factor(hh$EVTYPE2, levels = hh_EVLEVELS)
+ei_EVLEVELS <- names(table(ei$EVTYPE2))[order(table(ei$EVTYPE2))]
+ei$EVTYPE2 <- factor(ei$EVTYPE2, levels = ei_EVLEVELS)
+```
+
+#### Stage 8. Summarizing and grouping the data in preparation for plotting
+
+The notable point about this analysis is that it cannot be enough to simply calculate the mean or sum of any particular variable for each event. Some events may be catastrophic but rare (once or twice in a decade, or less), while others may be mildly problematic but so frequent the cumulative effect is significant.
+
+Therefore, this researcher has opted to report on the proportion of total damage or harm across all the events for each event type recorded. These totals will be taken across all years, having adjusted for inflation and assumed constant death and injury rates. This is essentially the same as a weighted average which also takes into account number of members in each category.
+
+Given the underlying purpose of the analysis, to assist with the assigning of scarce resources in planning for severe weather events, due consideration has been given to the seasonality of the events. Certain events may be more problematic in Summer and others in Winter. Insight on the time sensitivity of this data could further assist with planning of resources and public information. For this reason, panel plots have been generated, conditioned by calendar Quarter. Quarter was chosen over month as the resulting plots by month were too dense to read. The overall patterns are well visible in the Quarters. 
+
+```{r determining_event_and_quarter_totals_for_harm}
+library(data.table)
+# health hazard percentage calculations of total and by calendar quarter, by type
+hh_dt <- data.table(hh)
+hh_dt[, N_EVENTS := .N, by = EVTYPE2]
+hh_dt[, N_EVENTS_BY_QTR := .N, by = .(EVTYPE2,QTR)]
+
+TOTAL_HARM <- hh_dt[, sum(HARM)]
+hh_dt[, HARM_BY_TYPE := .(sum(HARM)), by = EVTYPE2]
+hh_dt[, PRP_OF_HARM := .(HARM_BY_TYPE/TOTAL_HARM)]
+hh_dt[, HARM_BY_TYPE_BY_QTR := .(sum(HARM)), by = .(EVTYPE2, QTR)]
+hh_dt[, PRP_OF_HARM_BY_QTR := .(HARM_BY_TYPE_BY_QTR/TOTAL_HARM)]
+```
+
+```{r determining_event_and_quarter_totals_for_damage}
+# economic impact percentage calculations of total and by calendar quarter, by type
+ei_dt <- data.table(ei)
+ei_dt[, LOG_N_EVENTS_BY_QTR := ifelse(log(.N)==0,1,log(.N)), by = .(EVTYPE2,QTR)]
+
+# a bit of trial and error to determine best spread
+ei_dt[, LOG_EVENT_FREQ_BY_QTR := .(factor(cut(LOG_N_EVENTS_BY_QTR, c(0, 4, 4.5, 5, 5.5, 6, 7, 7.5, 8, 8.5, 9, 9.5, 11),labels = c("0-4","4.5","5","5.5","6","7","7.5","8","8.5","9","9.5",">10"))))]
+
+TOTAL_PROP_DMG <- ei_dt[, sum(PROPDMG_ADJ)]
+ei_dt[, PROPDMG_BY_TYPE_BY_QTR := .(sum(PROPDMG_ADJ)), by = .(EVTYPE2, QTR)]
+ei_dt[, PRP_OF_PROPDMG_BY_QTR := .(PROPDMG_BY_TYPE_BY_QTR/TOTAL_PROP_DMG)]
+
+TOTAL_CROP_DMG <- ei_dt[, sum(CROPDMG_ADJ)]
+ei_dt[, CROPDMG_BY_TYPE_BY_QTR := .(sum(CROPDMG_ADJ)), by = .(EVTYPE2, QTR)]
+ei_dt[, PRP_OF_CROPDMG_BY_QTR := .(CROPDMG_BY_TYPE_BY_QTR/TOTAL_CROP_DMG)]
+```
+
+The data.table library was used to prepare the data for plotting for the following reasons:
+
+* The wish to plot a mix of individual and summary data points on the same panel (recorded fatalities and overall harm by type and quarter)
+* Speed of handling the large data set for economic impact (compared with sapply/mapply)
+* The ease of use
+* A learning recap for this researcher
+
+## Results
+
+#### Overall harm by event type by calendar Quarters
+
+```{r plotting_harm_results, fig.height=7, fig.width=8}
+library(lattice)
+
+# common parameters
+clrs <- c("#F248BA", "#886633", "#4488AA")
+dot <- c(15, 20, 4)
+alph = c(0.2, 1, 1, 1)
+dotsize = c(1.5, 1.1, 1)
+
+my.settings <- list(strip.background=list(col="white")
+             , list(axis.line = list(col = "transparent")))
+
+# harm to population health
+harmByY <- dotplot(EVTYPE2 ~ log(FATALITIES) + PRP_OF_HARM * 100 + log(N_EVENTS)
+        , data = hh_dt, xlab = NULL, ylab = NULL
+        , main = list(label = "Weather categories\ncausing harm to\nhuman population\n\n"
+                      , cex = 0.85)
+        , pch = dot, col = clrs, alpha = alph, cex = dotsize
+        , scales = list(draw = FALSE, draw.labels = FALSE)
+        , par.settings = my.settings
+        , key = list(text = list(c("All Quarters"), cex = 1))
+        )
+
+harmByQ <- dotplot(EVTYPE2 ~ log(FATALITIES) + PRP_OF_HARM_BY_QTR * 100 + log(N_EVENTS_BY_QTR) | QTR
+        , data = hh_dt
+        , pch = dot, col = clrs, alpha = alph, cex = dotsize
+        , layout = c(4, 1), xlab = NULL
+        , scales = list(y = list(cex = 0.6))
+        , par.settings = my.settings
+        , axis = function(side, line.col = "black", ...) {
+          if(side %in% c("left","bottom")) {
+          axis.default(side = side, line.col = "black", ...)
+          }
+        }
+        , key = list(columns = 3
+                    , text = list(c("Fatalities (log scale)"
+                                    , "% of recorded harm"
+                                   , "Number of Events (log scale)"
+                                   , "Number of events causing death\n(colour intensity)")
+                                  ,cex = 0.8)
+                     , points = list(pch = dot, col = clrs, alpha = alph)))
+
+print(harmByQ, pos = c(0, 0, 0.86, 1), more = TRUE)
+print(harmByY, pos = c(0.8, 0.0490, 1, 0.991))
+```
+
+#### Interpreting this graph:
+
+The blue cross shows a log scale of the number of events, so a move slightly to the right may be a 10 or 20 fold increase, and far to the right may be thousands of events compared to the left most readings.
+
+The dark brown dot is the calculated overall HARM index (geo mean of FATALITIES * INJURIES). This is on a linear scale where all points have a relative position and is proportional to the total.
+
+The pink strip indicates fatalities and is also on a log scale. Transparency (alpha) has been used so it is clear where many fatal events have been recorded over the years, compared to the occasional extreme event.
+
+The events are sorted by descending frequency.
+
+#### Conclusions drawn about weather events that cause harm to the human population:
+
+What is very clear from the top strips of the graph is that wind events  (other than tornados and hurricanes) rank the highest for harm to the population and are a constant and freqent hazard throughout the year. Looking at the very large split between HARM index and actual recorded fatalities, one might say that fortunately these events are causing mostly injuries rather than deaths, although no analysis has been made of the seriousness of reported injuries.
+
+Lightning is second on this list in terms of overall harm with a seasonal peak of very high numbers of injuries in the summer months (Q3).
+
+Tornados are third on the list, however, these may be considered more serious as the number of fatalities occuring in a spring (Q2) peak is noticeably higher than the above two items.
+
+Flooding is fourth on this list with a fairly constant frequency throughout the year.
+
+Finally, but most notable of all these is heat related events, peaking (obviously) in Q3 with an eye-catching death rate. This event type is certainly the most lethal.
+
+#### Overall economic impact by event type by calendar Quarters
+
+```{r plotting_damage_results, fig.height=7, fig.width=8}
+library(ggplot2)
+# using colour params from harm plots above
+
+ggei_qtr <- ggplot(ei_dt, aes(y = EVTYPE2, size = LOG_EVENT_FREQ_BY_QTR))
+ggei_qtr + ylim(c(levels(ei_dt$EVTYPE2), "")) +
+  theme_bw() + facet_grid(QTR~.) +
+  labs(title = "Weather categories causing economic impact (property and crop damage)"
+      , y = NULL, x = "% of all recorded costs attributable to weather damage", size = "Frequency of event (log scale)") +
+  theme(legend.position = "bottom") +
+  theme(axis.text.y = element_text(size=6)) +
+  geom_point(colour = clrs[3], alpha= 1, aes(x = PRP_OF_PROPDMG_BY_QTR * 100)) + 
+  geom_point(colour = clrs[2], alpha= 0.01, aes(x = PRP_OF_CROPDMG_BY_QTR * 100)) 
+```
+
+#### Interpreting this graph:
+
+The blue dots represent property damage and the ochre dots represent crop damage.
+
+Each variable (colour) sits on a linear scale where the position of each point in the series, relative to the left edge (zero) represents the proportion of the total damage recorded, i.e. the sum of all point distances (across all four quarters) from the zero mark equals 100% for each of the property and crop series.
+
+Log scales were deliberately avoided in order to emphasise the separation between the top events and the long tail of less significant events.
+
+The dot size is log scaled to the number of events in each quarter, so the biggest dots represent weather events that are thousands of times more frequent than the smallest.
+
+The events are sorted by descending frequency. Transparency has been used on the ochre dots but this is to improve readability of overlapping dots.
+
+#### Conclusions drawn about weather events that have an economic impact:
+
+For property damage, the events of greatest concern varies with the seasons. In Q4 and Q1 (winter) floods, winter storms and hail feature quite significantly. In Q2, tornados are the most damaging, along with floods and hail. In Q3, hurricanes and coastal floods make a huge impact. It should be noted that the dots representing hurricane damage and coastal flood are a high proportion of the overall cost (further to the right) but low frequency (small dots). This is expected in terms of the rare but extreme nature of these events. It is likely the two are related (e.g. Hurricane Katrina).
+
+In contrast, for crop damage, the runaway leader is drought. Although it peaks dramatically in Q3, it is the most significant problem year round. Cold weather is in second place but with very few rare events doing all the damage. Flood and hail would rank next but these are all are far behind drought by an order of magnitude.
+
+#### A note about scaling 
+
+The above plots of property and crop damage are measured in relative terms within each series and do not take into consideration the absolute values of costs of damage compared to each other.
+
+Property and crop damage measure economic cost in dollars, but for different sectors of geography and populations. They may not be immediately comparable based purely on numbers. Agricultural damage may cost less to put right but for those communities and industries affected they are no less catastrophic. For the purposes of comparison, the absolute values are presented side by side in tabular form.
+
+```{r comparison_property_crop_damage_scales}
+options(digits = 9)
+CompPropCrop <- ei_dt[, .(sum(PROPDMG_ADJ), sum(CROPDMG_ADJ)), by = EVTYPE2]
+names(CompPropCrop) <- c("EVTYPE", "PROP_TOTALS", "CROP_TOTALS")
+CompPropCrop[order(-PROP_TOTALS)]
+CompPropCrop[order(-CROP_TOTALS)]
+```
