@@ -480,10 +480,10 @@ The data.table library was used to prepare the data for plotting for the followi
 library(lattice)
 
 # common parameters
-clrs <- c("#F248BA", "#886633", "#4488AA")
-dot <- c(15, 20, 4)
+clrs <- c("#F877BA", "#886633", "#4488AA")
+dot <- c(19, 20, 4)
 alph = c(0.2, 1, 1, 1)
-dotsize = c(1.5, 1.1, 1)
+dotsize = c(0.9, 1.12, 1)
 
 my.settings <- list(strip.background=list(col="white")
              , list(axis.line = list(col = "transparent")))
@@ -494,6 +494,12 @@ harmByY <- dotplot(EVTYPE2 ~ log(FATALITIES) + PRP_OF_HARM * 100 + log(N_EVENTS)
         , main = list(label = "Weather categories\ncausing harm to\nhuman population\n\n"
                       , cex = 0.85)
         , pch = dot, col = clrs, alpha = alph, cex = dotsize
+        , panel = panel.superpose
+        , panel.groups = function(x,y,group.number, ...) {
+            panel.refline(h = y, alpha = 0.1, lty = 3, lwd = 0.1)
+            if (group.number == 1) panel.xyplot(x,y,jitter.y = TRUE,...)
+            else panel.xyplot(x,y,...)
+        }
         , scales = list(draw = FALSE, draw.labels = FALSE)
         , par.settings = my.settings
         , key = list(text = list(c("All Quarters"), cex = 1))
@@ -503,6 +509,12 @@ harmByQ <- dotplot(EVTYPE2 ~ log(FATALITIES) + PRP_OF_HARM_BY_QTR * 100 + log(N_
         , data = hh_dt
         , pch = dot, col = clrs, alpha = alph, cex = dotsize
         , layout = c(4, 1), xlab = NULL
+        , panel = panel.superpose
+        , panel.groups = function(x,y,group.number, ...) {
+            panel.refline(h = y, alpha = 0.1, lty = 3, lwd = 0.1)
+            if (group.number == 1) panel.xyplot(x,y,jitter.y = TRUE,...)
+            else panel.xyplot(x,y,...)
+        }
         , scales = list(y = list(cex = 0.6))
         , par.settings = my.settings
         , axis = function(side, line.col = "black", ...) {
@@ -519,7 +531,7 @@ harmByQ <- dotplot(EVTYPE2 ~ log(FATALITIES) + PRP_OF_HARM_BY_QTR * 100 + log(N_
                      , points = list(pch = dot, col = clrs, alpha = alph)))
 
 print(harmByQ, pos = c(0, 0, 0.86, 1), more = TRUE)
-print(harmByY, pos = c(0.8, 0.0490, 1, 0.991))
+print(harmByY, pos = c(0.8, 0.0490, 1, 0.992))
 ```
 
 #### Interpreting this graph:
